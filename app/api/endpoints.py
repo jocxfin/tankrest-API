@@ -51,8 +51,9 @@ def search_stations(
     query = db.query(Station)
 
     if name:
-        logger.info(f"Searching stations by name: {name}")
-        query = query.filter(Station.name.ilike(f"%{name}%"))
+        names = name.split(',')
+        logger.info(f"Searching stations by names: {names}")
+        query = query.filter(func.lower(Station.name).in_([n.lower() for n in names]))
     if chain:
         chains = chain.split(',')
         logger.info(f"Searching stations by chain: {chains}")
