@@ -53,7 +53,7 @@ def search_stations(
     if name:
         names = name.split(',')
         logger.info(f"Searching stations by names: {names}")
-        name_order = case([(Station.name.ilike(n), i) for i, n in enumerate(names)], else_=len(names))
+        name_order = case(*[(Station.name.ilike(n), i) for i, n in enumerate(names)], else_=len(names))
         query = query.filter(func.lower(Station.name).in_([n.lower() for n in names])).order_by(name_order)
     if chain:
         chains = chain.split(',')
