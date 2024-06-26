@@ -56,7 +56,7 @@ def search_stations(
     if chain:
         chains = chain.split(',')
         logger.info(f"Searching stations by chain: {chains}")
-        query = query.filter(Station.chain.in_(chains))
+        query = query.filter(func.lower(Station.chain).in_([c.lower() for c in chains]))
     if city:
         logger.info(f"Searching stations by city: {city}")
         query = query.filter(Station.address_city.ilike(f"%{city}%"))
