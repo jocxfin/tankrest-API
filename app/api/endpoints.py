@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, asc, func
+from sqlalchemy import desc, asc, func, case
 from app.core.database import get_db
 from app.models.station import Station
 from app.models.price import Price
@@ -53,7 +53,8 @@ def search_stations(
     if name:
         names = name.split(',')
         logger.info(f"Searching stations by names: {names}")
-        query = query.filter(func.lower(Station.name).in_([n.lower() for n in names]))
+        name_order = case([(Station.name.ilike(n), i) for i, n in enumerate(names)], else_=len(names))
+        query = query.filter(func.lower(Station.name).in_([n.lower() for n in names])).order_by(name_order)
     if chain:
         chains = chain.split(',')
         logger.info(f"Searching stations by chain: {chains}")
