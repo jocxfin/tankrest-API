@@ -9,36 +9,49 @@ from app.services.auth import AuthService
 from app.services.fuel import FuelService
 from app.models.station import Station
 from datetime import datetime
+import threading
 
 app = FastAPI()
 
 # Create the database tables
 Base.metadata.create_all(bind=engine)
 
-@app.on_event("startup")
-async def startup_event():
-    # Perform initial login to get tokens and schedule refresh
-    try:
-        login_response = AuthService.login()
-        logger.info("Successfully logged in and obtained tokens.")
-        logger.info(f"Login response: {login_response}")
-        
-        tokens = AuthService.refresh()
-        logger.info("Successfully refreshed token.")
-        logger.info(f"Tokens received: {tokens}")
-        endpoints.set_tokens(tokens)
-        AuthService.schedule_token_refresh()
-    except Exception as e:
-        logger.error(f"Failed to login or refresh token: {e}")
-        global tokens
-        tokens = None
+# Initialize global tokens
+global tokens
+tokens = {}
 
-    # Fetch all stations and update the database
-    if tokens and "accessToken" in tokens:
-        with next(get_db()) as db:
-            update_stations(db, tokens["accessToken"])
-    else:
-        logger.error("No accessToken found in tokens.")
+# Function to refresh tokens periodically
+def refresh_tokens_periodically():
+    while True:
+        try:
+            logger.info("Refreshing tokens...")
+            refresh_token = tokens.get("refreshToken")
+            new_tokens = AuthService.refresh(refresh_token)
+            global tokens
+            tokens = new_tokens
+            logger.info("Tokens refreshed successfully.")
+        except Exception as e:
+            logger.error(f"Failed to refresh tokens: {e}")
+        time.sleep(3600)  # Sleep for 1 hour before refreshing again
+
+# Perform initial login to get tokens
+try:
+    login_response = AuthService.login()
+    logger.info("Successfully logged in and obtained tokens.")
+    logger.info(f"Login response: {login_response}")
+    
+    refresh_token = login_response.get("refreshToken")
+    tokens = AuthService.refresh(refresh_token)
+    logger.info("Successfully refreshed token.")
+    logger.info(f"Tokens received: {tokens}")
+    endpoints.set_tokens(tokens)
+
+    # Start the token refresh thread
+    refresh_thread = threading.Thread(target=refresh_tokens_periodically, daemon=True)
+    refresh_thread.start()
+except Exception as e:
+    logger.error(f"Failed to login or refresh token: {e}")
+    tokens = None
 
 # Fetch all stations and update the database
 def update_stations(db: Session, token: str):
@@ -73,6 +86,12 @@ def update_stations(db: Session, token: str):
             except Exception as e:
                 logger.error(f"Error adding station {station['_id']}: {e}")
     db.commit()
+
+if tokens and "accessToken" in tokens:
+    with next(get_db()) as db:
+        update_stations(db, tokens["accessToken"])
+else:
+    logger.error("No accessToken found in tokens.")
 
 app.include_router(endpoints.router)
 
