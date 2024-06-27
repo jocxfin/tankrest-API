@@ -15,20 +15,30 @@ app = FastAPI()
 # Create the database tables
 Base.metadata.create_all(bind=engine)
 
-# Perform initial login to get tokens and schedule refresh
-try:
-    login_response = AuthService.login()
-    logger.info("Successfully logged in and obtained tokens.")
-    logger.info(f"Login response: {login_response}")
-    
-    tokens = AuthService.refresh()
-    logger.info("Successfully refreshed token.")
-    logger.info(f"Tokens received: {tokens}")
-    endpoints.set_tokens(tokens)
-    AuthService.schedule_token_refresh()
-except Exception as e:
-    logger.error(f"Failed to login or refresh token: {e}")
-    tokens = None
+@app.on_event("startup")
+async def startup_event():
+    # Perform initial login to get tokens and schedule refresh
+    try:
+        login_response = AuthService.login()
+        logger.info("Successfully logged in and obtained tokens.")
+        logger.info(f"Login response: {login_response}")
+        
+        tokens = AuthService.refresh()
+        logger.info("Successfully refreshed token.")
+        logger.info(f"Tokens received: {tokens}")
+        endpoints.set_tokens(tokens)
+        AuthService.schedule_token_refresh()
+    except Exception as e:
+        logger.error(f"Failed to login or refresh token: {e}")
+        global tokens
+        tokens = None
+
+    # Fetch all stations and update the database
+    if tokens and "accessToken" in tokens:
+        with next(get_db()) as db:
+            update_stations(db, tokens["accessToken"])
+    else:
+        logger.error("No accessToken found in tokens.")
 
 # Fetch all stations and update the database
 def update_stations(db: Session, token: str):
@@ -63,12 +73,6 @@ def update_stations(db: Session, token: str):
             except Exception as e:
                 logger.error(f"Error adding station {station['_id']}: {e}")
     db.commit()
-
-if tokens and "accessToken" in tokens:
-    with next(get_db()) as db:
-        update_stations(db, tokens["accessToken"])
-else:
-    logger.error("No accessToken found in tokens.")
 
 app.include_router(endpoints.router)
 
