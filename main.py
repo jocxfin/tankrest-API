@@ -1,23 +1,25 @@
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 from app.api import endpoints
-from app.core.database import Base, engine, get_db
+from app.core.database import Base, engine, get_async_db
 from app.services.auth import AuthService
 from app.services.fuel import FuelService
 from app.models.station import Station
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor
-import asyncio
-import aiofiles
 from pathlib import Path
+import aiofiles
+import asyncio
 
 app = FastAPI()
 
 # Create the database tables
-Base.metadata.create_all(bind=engine)
+@app.on_event("startup")
+async def startup_event():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 tokens = None
 tokens_lock = asyncio.Lock()
@@ -71,14 +73,16 @@ async def refresh_tokens_periodically():
 
 # Initialize tokens on startup
 @app.on_event("startup")
-async def startup_event():
+async def on_startup():
     await initialize_tokens()
     asyncio.create_task(refresh_tokens_periodically())
 
-async def update_stations(db: Session, token: str):
+async def update_stations(db: AsyncSession, token: str):
     stations_data = await FuelService.get_stations(token)
     for station in stations_data:
-        db_station = db.query(Station).filter(Station.id == station["_id"]).first()
+        db_station = await db.execute(
+            Station.__table__.select().where(Station.id == station["_id"])
+        ).first()
         if not db_station:
             try:
                 is_visible = station.get("isVisible", False)
@@ -106,13 +110,13 @@ async def update_stations(db: Session, token: str):
                 db.add(db_station)
             except Exception as e:
                 logger.error(f"Error adding station {station['_id']}: {e}")
-    db.commit()
+    await db.commit()
 
 @app.on_event("startup")
 async def initial_update_stations():
     async with tokens_lock:
         if tokens and "accessToken" in tokens:
-            async with get_db() as db:
+            async with get_async_db() as db:
                 await update_stations(db, tokens["accessToken"])
         else:
             logger.error("No accessToken found in tokens.")
