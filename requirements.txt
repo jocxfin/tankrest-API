@@ -9,3 +9,4 @@ geopy
 fastapi-utils
 aiofiles
 aiohttp
+aiosqlite

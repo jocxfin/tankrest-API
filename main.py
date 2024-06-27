@@ -16,6 +16,9 @@ import uvicorn
 
 app = FastAPI()
 
+# Configure logging
+logger.add("app.log", rotation="500 MB")
+
 # Create the database tables
 @app.on_event("startup")
 async def startup_event():
