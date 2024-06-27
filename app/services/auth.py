@@ -2,9 +2,14 @@ import requests
 from fastapi import HTTPException
 from app.core.config import settings
 from loguru import logger
+from datetime import datetime, timedelta
+import threading
 
 class AuthService:
     BASE_URL = "https://api.tankille.fi"
+    refresh_token = None
+    access_token = None
+    token_expiry = datetime.utcnow() - timedelta(hours=1)
 
     @staticmethod
     def login():
@@ -27,12 +32,16 @@ class AuthService:
             logger.error(f"Login failed with status code {response.status_code}")
             raise HTTPException(status_code=response.status_code, detail="Login failed")
         logger.info("Login successful")
-        return response.json()
+        tokens = response.json()
+        AuthService.refresh_token = tokens.get("refreshToken")
+        AuthService.access_token = tokens.get("accessToken")
+        AuthService.token_expiry = datetime.utcnow() + timedelta(hours=1)
+        return tokens
 
     @staticmethod
-    def refresh(token: str):
+    def refresh():
         url = f"{AuthService.BASE_URL}/auth/refresh"
-        payload = {"token": token}
+        payload = {"token": AuthService.refresh_token}
         headers = {
             "accept": "*/*",
             "content-type": "application/json",
@@ -46,4 +55,19 @@ class AuthService:
             logger.error(f"Token refresh failed with status code {response.status_code}")
             raise HTTPException(status_code=response.status_code, detail="Token refresh failed")
         logger.info("Token refresh successful")
-        return response.json()
+        tokens = response.json()
+        AuthService.access_token = tokens.get("accessToken")
+        AuthService.token_expiry = datetime.utcnow() + timedelta(hours=1)
+        return tokens
+
+    @staticmethod
+    def schedule_token_refresh():
+        def refresh_tokens():
+            while True:
+                now = datetime.utcnow()
+                if AuthService.token_expiry < now + timedelta(minutes=5):
+                    AuthService.refresh()
+                threading.Event().wait(60)  # wait for 1 minute
+
+        thread = threading.Thread(target=refresh_tokens, daemon=True)
+        thread.start()

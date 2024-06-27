@@ -6,3 +6,4 @@ sqlalchemy
 python-dotenv
 loguru
 geopy
+fastapi-utils

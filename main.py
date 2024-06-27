@@ -15,17 +15,17 @@ app = FastAPI()
 # Create the database tables
 Base.metadata.create_all(bind=engine)
 
-# Perform initial login to get tokens
+# Perform initial login to get tokens and schedule refresh
 try:
     login_response = AuthService.login()
     logger.info("Successfully logged in and obtained tokens.")
     logger.info(f"Login response: {login_response}")
     
-    refresh_token = login_response.get("refreshToken")
-    tokens = AuthService.refresh(refresh_token)
+    tokens = AuthService.refresh()
     logger.info("Successfully refreshed token.")
     logger.info(f"Tokens received: {tokens}")
     endpoints.set_tokens(tokens)
+    AuthService.schedule_token_refresh()
 except Exception as e:
     logger.error(f"Failed to login or refresh token: {e}")
     tokens = None
