@@ -7,3 +7,5 @@ python-dotenv
 loguru
 geopy
 fastapi-utils
+aiofiles
+aiohttp

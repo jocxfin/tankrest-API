@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, asc, func, case
+from sqlalchemy import desc, func, case
 from app.core.database import get_db
 from app.models.station import Station
 from app.models.price import Price
@@ -8,6 +8,7 @@ from app.services.fuel import FuelService
 from geopy.distance import geodesic
 from loguru import logger
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
 
 router = APIRouter()
 
@@ -18,19 +19,19 @@ def set_tokens(new_tokens):
     tokens = new_tokens
 
 @router.get("/stations")
-def read_stations(skip: int = 0, limit: int = 5000, db: Session = Depends(get_db)):
+async def read_stations(skip: int = 0, limit: int = 5000, db: Session = Depends(get_db)):
     stations = db.query(Station).offset(skip).limit(limit).all()
     return stations
 
 @router.get("/stations/{station_id}/prices")
-def read_station_prices(station_id: str, db: Session = Depends(get_db)):
+async def read_station_prices(station_id: str, db: Session = Depends(get_db)):
     prices = db.query(Price).filter(Price.station_id == station_id).all()
     if not prices:
         raise HTTPException(status_code=404, detail="Prices not found")
     return prices
 
 @router.get("/stations/search")
-def search_stations(
+async def search_stations(
     name: str = None,
     longitude: float = None,
     latitude: float = None,
@@ -75,8 +76,7 @@ def search_stations(
     if not stations:
         raise HTTPException(status_code=404, detail="Stations not found")
 
-    enriched_stations = []
-    for station in stations:
+    async def fetch_prices_for_station(station):
         try:
             prices_query = db.query(Price).filter(Price.station_id == station.id)
             if latest:
@@ -96,7 +96,7 @@ def search_stations(
 
             if should_update:
                 logger.info(f"Fetching prices from API for station {station.id}")
-                prices_response = FuelService.get_station_prices(station.id, tokens["accessToken"], since="2024-06-01T00:00:00Z")
+                prices_response = await FuelService.get_station_prices(station.id, tokens["accessToken"], since="2024-06-01T00:00:00Z")
                 for price_data in prices_response:
                     for price in price_data.get("prices", []):
                         price_record = Price(
@@ -117,7 +117,7 @@ def search_stations(
                     prices = db.query(Price).filter(Price.station_id == station.id, Price.id.in_(subquery)).all()
                 else:
                     prices = prices_query.all()
-
+            
             prices_list = [
                 {
                     "tag": price.tag,
@@ -166,10 +166,15 @@ def search_stations(
                     "is_visible": station.is_visible,
                     "prices": prices_list
                 }
-            enriched_stations.append(enriched_station)
-            logger.info(f"Enriched station: {enriched_station}")
+            return enriched_station
         except Exception as e:
             logger.error(f"Failed to get prices for station {station.id}: {e}")
+            return None
+
+    tasks = [fetch_prices_for_station(station) for station in stations]
+    enriched_stations = await asyncio.gather(*tasks)
+
+    enriched_stations = [station for station in enriched_stations if station is not None]
 
     if sortby:
         if sortby == "pricedesc":
