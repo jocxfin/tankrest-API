@@ -1,14 +1,15 @@
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy.exc import SQLAlchemyError
 from loguru import logger
 from app.api import endpoints
 from app.core.database import Base, engine, get_async_db
 from app.services.auth import AuthService
 from app.services.fuel import FuelService
 from app.models.station import Station
-from datetime import datetime, timedelta
 from pathlib import Path
 import aiofiles
 import asyncio
@@ -18,6 +19,11 @@ app = FastAPI()
 
 # Configure logging
 logger.add("app.log", rotation="500 MB")
+
+# Disable default Gunicorn error logging
+import logging
+gunicorn_error_logger = logging.getLogger("gunicorn.error")
+gunicorn_error_logger.handlers = []
 
 # Create the database tables
 @app.on_event("startup")
@@ -83,9 +89,9 @@ async def on_startup():
 async def update_stations(db: AsyncSession, token: str):
     stations_data = await FuelService.get_stations(token)
     for station in stations_data:
-        db_station = await db.execute(
-            Station.__table__.select().where(Station.id == station["_id"])
-        ).first()
+        result = await db.execute(select(Station).where(Station.id == station["_id"]))
+        db_station = result.scalar_one_or_none()
+
         if not db_station:
             try:
                 is_visible = station.get("isVisible", False)
@@ -94,9 +100,9 @@ async def update_stations(db: AsyncSession, token: str):
 
                 location_latitude = float(station["location"]["coordinates"][1])
                 location_longitude = float(station["location"]["coordinates"][0])
-                
+
                 logger.info(f"Adding station: id={station['_id']}, name={station['name']}")
-                
+
                 db_station = Station(
                     id=station["_id"],
                     name=station["name"],
@@ -120,7 +126,12 @@ async def initial_update_stations():
     async with tokens_lock:
         if tokens and "accessToken" in tokens:
             async with get_async_db() as db:
-                await update_stations(db, tokens["accessToken"])
+                try:
+                    await update_stations(db, tokens["accessToken"])
+                except SQLAlchemyError as e:
+                    logger.error(f"Database error during initial update: {e}")
+                except Exception as e:
+                    logger.error(f"Unexpected error during initial update: {e}")
         else:
             logger.error("No accessToken found in tokens.")
 

@@ -3,10 +3,8 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 from contextlib import asynccontextmanager
-from sqlalchemy.ext.asyncio import create_async_engine
 
 engine = create_async_engine(settings.DATABASE_URL.replace("sqlite://", "sqlite+aiosqlite://"), echo=True)
-
 
 AsyncSessionLocal = sessionmaker(
     bind=engine,

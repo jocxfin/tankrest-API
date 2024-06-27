@@ -1,14 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import desc, func, case
-from app.core.database import get_db
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, case
+from app.core.database import get_async_db
 from app.models.station import Station
 from app.models.price import Price
 from app.services.fuel import FuelService
 from geopy.distance import geodesic
 from loguru import logger
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor
+import asyncio
 
 router = APIRouter()
 
@@ -19,13 +19,15 @@ def set_tokens(new_tokens):
     tokens = new_tokens
 
 @router.get("/stations")
-async def read_stations(skip: int = 0, limit: int = 5000, db: Session = Depends(get_db)):
-    stations = db.query(Station).offset(skip).limit(limit).all()
+async def read_stations(skip: int = 0, limit: int = 5000, db: AsyncSession = Depends(get_async_db)):
+    result = await db.execute(select(Station).offset(skip).limit(limit))
+    stations = result.scalars().all()
     return stations
 
 @router.get("/stations/{station_id}/prices")
-async def read_station_prices(station_id: str, db: Session = Depends(get_db)):
-    prices = db.query(Price).filter(Price.station_id == station_id).all()
+async def read_station_prices(station_id: str, db: AsyncSession = Depends(get_async_db)):
+    result = await db.execute(select(Price).filter(Price.station_id == station_id))
+    prices = result.scalars().all()
     if not prices:
         raise HTTPException(status_code=404, detail="Prices not found")
     return prices
@@ -44,12 +46,12 @@ async def search_stations(
     zipcode: str = None,
     dbonly: bool = False,
     simplified: bool = False,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     if not tokens or "accessToken" not in tokens:
         raise HTTPException(status_code=401, detail="Access token missing or invalid")
 
-    query = db.query(Station)
+    query = select(Station)
 
     if name:
         names = name.split(',')
@@ -68,22 +70,26 @@ async def search_stations(
         query = query.filter(Station.address_zipcode.ilike(f"%{zipcode}%"))
     if longitude is not None and latitude is not None:
         logger.info(f"Searching stations by location: longitude={longitude}, latitude={latitude}")
-        stations = query.all()
+        result = await db.execute(query)
+        stations = result.scalars().all()
         stations = [station for station in stations if geodesic((latitude, longitude), (station.location_latitude, station.location_longitude)).km <= distance / 1000]
     else:
-        stations = query.all()
+        result = await db.execute(query)
+        stations = result.scalars().all()
 
     if not stations:
         raise HTTPException(status_code=404, detail="Stations not found")
 
     async def fetch_prices_for_station(station):
         try:
-            prices_query = db.query(Price).filter(Price.station_id == station.id)
+            prices_query = select(Price).filter(Price.station_id == station.id)
             if latest:
                 subquery = prices_query.order_by(desc(Price.updated_at)).distinct(Price.tag).with_entities(Price.id).subquery()
-                prices = db.query(Price).filter(Price.station_id == station.id, Price.id.in_(subquery)).all()
+                result = await db.execute(select(Price).filter(Price.station_id == station.id, Price.id.in_(subquery)))
+                prices = result.scalars().all()
             else:
-                prices = prices_query.all()
+                result = await db.execute(prices_query)
+                prices = result.scalars().all()
 
             should_update = True
             if dbonly:
@@ -109,15 +115,11 @@ async def search_stations(
                             updated_at=datetime.utcnow()
                         )
                         db.add(price_record)
-                db.commit()
+                await db.commit()
 
-                prices_query = db.query(Price).filter(Price.station_id == station.id)
-                if latest:
-                    subquery = prices_query.order_by(desc(Price.updated_at)).distinct(Price.tag).with_entities(Price.id).subquery()
-                    prices = db.query(Price).filter(Price.station_id == station.id, Price.id.in_(subquery)).all()
-                else:
-                    prices = prices_query.all()
-            
+                result = await db.execute(prices_query)
+                prices = result.scalars().all()
+
             prices_list = [
                 {
                     "tag": price.tag,

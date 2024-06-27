@@ -2,7 +2,7 @@ fastapi
 uvicorn
 gunicorn
 requests
-sqlalchemy
+sqlalchemy[asyncio]
 python-dotenv
 loguru
 geopy
