@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import aiofiles
 import asyncio
+import uvicorn
 
 app = FastAPI()
 
@@ -32,7 +33,6 @@ class FileLockContextManager:
         self.lock_file = Path(self.filename)
 
     async def __aenter__(self) -> None:
-        # Might raise FileExistsError
         async with aiofiles.open(self.lock_file, mode='x'):
             pass
 
@@ -130,3 +130,6 @@ async def read_index():
     async with aiofiles.open("app/templates/index.html") as f:
         html_content = await f.read()
     return HTMLResponse(content=html_content)
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=5269, log_level="info")
